@@ -66,12 +66,12 @@ public partial class Quest
 
         var res = questStep.RunComponents();
 
-        // HackFix: added to account for missing Ready step on Quests that use a Score + LetItBeDone
+        // Without a Ready step, LetItDone quests have no report act to advance them.
+        // Use the full objective status so count-based and multi-objective quests also work.
         if (
             Step == QuestComponentKind.Progress &&
-            Template.Score > 0 &&
             Template.LetItDone &&
-            GetQuestObjectivePercent() >= 1f &&
+            GetQuestObjectiveStatus() >= QuestObjectiveStatus.QuestComplete &&
             !QuestSteps.ContainsKey(QuestComponentKind.Ready))
         {
             res = true;
