@@ -49,3 +49,21 @@ Related: `Docs/WorldConfig_en.md` / `Docs/WorldConfig_ru.md`.
 - [Home](Home)
 - [Aspire Development Guide](Aspire-Development-Guide)
 - [Components](Components)
+
+## Reloading doodad placements during development
+
+Use `/doodad reload <templateId>` (for example `/doodad reload 3848`) to
+replace file-backed spawns of one template in your current world instance.
+The command uses the existing `doodad` access-level requirement.
+
+Edit `Data/Worlds/<world>/doodad_spawns*.json` under the running Game server's
+application directory. A source-tree edit must first be copied into that
+runtime directory; rebuilding also copies the data. Coordinates are absolute,
+and rotation values in these files are degrees.
+
+The command validates files before removing old objects, merges duplicate
+positions, cancels pending respawns/despawns, and spawns the new placements.
+It refuses missing placements, invalid positions, scheduled templates, and
+file-backed spawns containing player-owned objects. Other templates and
+unregistered GM spawns are left alone. Active interactions with replaced
+objects are interrupted; their runtime object IDs change.
