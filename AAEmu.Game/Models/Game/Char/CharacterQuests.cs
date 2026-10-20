@@ -168,7 +168,10 @@ public class CharacterQuests(Character owner)
     {
         var npc = Owner.ParentWorld.GetNpc(npcObjId);
         Owner.CurrentTarget = npc;
-        return AddQuest(questId, false, QuestAcceptorType.Npc, npc.TemplateId);
+        if (npc == null)
+            return false;
+        return NymphQueenEncounter.AcceptQuest(Owner, npc, questId,
+            () => AddQuest(questId, false, QuestAcceptorType.Npc, npc.TemplateId));
     }
 
     /// <summary>
@@ -542,6 +545,7 @@ public class CharacterQuests(Character owner)
                     var oldStatus = quest.Status;
                     quest.ReadData((byte[])reader.GetValue("data"));
                     quest.Status = oldStatus;
+                    NymphQueenEncounter.RecoverInterruptedQuest(quest);
                     ActiveQuests.Add(quest.TemplateId, quest);
                     quest.QuestInitialized();
                     quest.RequestEvaluation();

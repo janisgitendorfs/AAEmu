@@ -8,6 +8,7 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items.Containers;
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Skills.Effects;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
@@ -21,6 +22,22 @@ namespace AAEmu.Game.Models.Game.NPChar;
 
 public class NpcSpawner : Spawner<Npc>
 {
+    internal NymphQueenEncounter Encounter { get; set; }
+
+    internal void CompleteEncounter(NymphQueenEncounter encounter, bool respawn)
+    {
+        lock (_spawnLock)
+        {
+            if (Encounter != encounter)
+                return;
+            Encounter = null;
+            if (respawn)
+            {
+                IsSpawnScheduled = false;
+                DoSpawn();
+            }
+        }
+    }
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
     [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
@@ -72,6 +89,8 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public void Update()
     {
+        if (Encounter != null)
+            return;
         try
         {
             lock (_spawnLock)
@@ -920,6 +939,8 @@ public class NpcSpawner : Spawner<Npc>
     /// </summary>
     public void DoSpawn()
     {
+        if (Encounter != null)
+            return;
         // Check if template exists
         if (Template == null)
         {
@@ -1334,7 +1355,10 @@ public class NpcSpawner : Spawner<Npc>
                     npc.Ai.OnAggroTargetChanged();
                 }
 
-                if (effect.LifeTime > 0)
+                if (caster is Npc { Encounter: { } encounter })
+                    encounter.AttachReplacement(npc);
+
+                if (effect.LifeTime > 0 && npc.Encounter == null)
                 {
                     TaskManager.Instance.Schedule(new NpcSpawnerDoDespawnTask(npc), TimeSpan.FromSeconds(effect.LifeTime));
                 }

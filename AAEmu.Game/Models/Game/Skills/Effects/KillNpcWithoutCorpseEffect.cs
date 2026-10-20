@@ -46,6 +46,12 @@ public class KillNpcWithoutCorpseEffect : EffectTemplate
 
     private void RemoveEffectsAndDelete(Unit unit)
     {
+        if (!Vanish && unit is Npc { Encounter: { } encounter } encounterNpc)
+        {
+            encounter.Retreat(encounterNpc);
+            return;
+        }
+
         if (!Vanish && unit is Npc defeatedNpc && defeatedNpc.CharacterTagging.Tagger != null)
         {
             // A scripted defeat can remove an NPC before DoDie awards quest credit.
