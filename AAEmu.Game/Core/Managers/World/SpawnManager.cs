@@ -1,4 +1,4 @@
-using AAEmu.Commons.Exceptions;
+﻿using AAEmu.Commons.Exceptions;
 using AAEmu.Commons.IO;
 using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
@@ -399,6 +399,102 @@ public class SpawnManager(WorldInstance parentWorld)
         }
 
         return reversedFiles;
+    }
+
+    /// <summary>
+    /// Reloads file-backed spawns for one doodad template in this world instance.
+    /// </summary>
+    public int ReloadDoodadSpawns(uint templateId)
+    {
+        if (!DoodadManager.Instance.Exist(templateId))
+            throw new InvalidOperationException($"Doodad template {templateId} does not exist.");
+        if (GameScheduleManager.Instance.CheckDoodadInScheduleSpawners((int)templateId))
+            throw new InvalidOperationException("Scheduled doodads cannot be reloaded live.");
+
+        var worldPath = Path.Combine(FileManager.AppPath, "Data", "Worlds", World.Template.Name);
+        var files = ReverseSpawnFiles(Directory.GetFiles(worldPath, "doodad_spawns*.json"));
+        var replacements = ReadDoodadReloadSpawns(files, templateId);
+        foreach (var spawner in replacements)
+        {
+            spawner.ParentWorld = World;
+            spawner.Position.WorldId = World.Id;
+            spawner.Position.ZoneId = WorldManager.Instance.GetZoneId(World.Template, spawner.Position.X, spawner.Position.Y);
+            spawner.Position.Yaw = spawner.Position.Yaw.DegToRad();
+            spawner.Position.Pitch = spawner.Position.Pitch.DegToRad();
+            spawner.Position.Roll = spawner.Position.Roll.DegToRad();
+        }
+
+        lock (_lockSpawner)
+        {
+            var previous = DoodadSpawners.Values.Where(s => s.UnitId == templateId).ToHashSet();
+            var doodads = World.GetAllDoodads().Where(d => previous.Contains(d.Spawner)).ToHashSet();
+            lock (Respawns)
+            {
+                doodads.UnionWith(Respawns.OfType<Doodad>().Where(d => previous.Contains(d.Spawner)));
+            }
+            lock (Despawns)
+            {
+                doodads.UnionWith(Despawns.OfType<Doodad>().Where(d => previous.Contains(d.Spawner)));
+            }
+            foreach (var spawner in previous)
+            {
+                doodads.UnionWith(spawner._spawned);
+                if (spawner.Last != null)
+                    doodads.Add(spawner.Last);
+            }
+            if (doodads.Any(d => d.IsPersistent || d.OwnerId != 0 || d.ItemId != 0))
+                throw new InvalidOperationException("Cannot reload spawns containing player-owned doodads.");
+
+            foreach (var spawner in previous)
+                spawner.Retire();
+            foreach (var doodad in doodads)
+            {
+                RemoveRespawn(doodad);
+                RemoveDespawn(doodad);
+                doodad.Respawn = DateTime.MinValue;
+                doodad.Spawner.Despawn(doodad);
+            }
+            foreach (var spawner in previous)
+                DoodadSpawners.Remove(spawner.Id);
+            foreach (var spawner in replacements)
+            {
+                spawner.Id = _nextId++;
+                DoodadSpawners.Add(spawner.Id, spawner);
+                spawner.Spawn(0);
+            }
+        }
+        Logger.Info($"Reloaded {replacements.Count} spawns for doodad {templateId} in {World}");
+        return replacements.Count;
+    }
+
+    internal static List<DoodadSpawner> ReadDoodadReloadSpawns(IEnumerable<string> files, uint templateId)
+    {
+        var replacements = new List<DoodadSpawner>();
+        foreach (var file in files)
+        {
+            if (!JsonHelper.TryDeserializeObject(File.ReadAllText(file), out List<DoodadSpawner> entries, out var error))
+                throw new InvalidOperationException($"Invalid doodad spawn file: {file}", error);
+            foreach (var spawner in entries)
+            {
+                if (spawner == null)
+                    throw new InvalidOperationException($"Null doodad spawn in {file}");
+                if (spawner.UnitId != templateId)
+                    continue;
+                var pos = spawner.Position;
+                if (pos == null || !float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z) ||
+                    !float.IsFinite(pos.Roll) || !float.IsFinite(pos.Pitch) || !float.IsFinite(pos.Yaw) ||
+                    !float.IsFinite(spawner.Scale) || spawner.RespawnTime < 0)
+                    throw new InvalidOperationException($"Invalid position or settings for doodad {templateId} in {file}");
+                if (replacements.Any(s => Math.Abs(s.Position.X - pos.X) < 0.01f &&
+                                          Math.Abs(s.Position.Y - pos.Y) < 0.01f &&
+                                          Math.Abs(s.Position.Z - pos.Z) < 0.01f))
+                    continue;
+                replacements.Add(spawner);
+            }
+        }
+        if (replacements.Count == 0)
+            throw new InvalidOperationException($"No file-backed spawns found for doodad {templateId}; nothing changed.");
+        return replacements;
     }
 
     private bool LoadDoodadSpawns(string worldPath)
@@ -1057,7 +1153,17 @@ public class SpawnManager(WorldInstance parentWorld)
                     }
 
                     if (obj is Doodad doodad)
-                        doodad.Spawner.Respawn(doodad);
+                    {
+                        lock (_lockSpawner)
+                        {
+                            lock (Respawns)
+                            {
+                                if (!Respawns.Remove(doodad))
+                                    continue;
+                            }
+                            doodad.Spawner.Respawn(doodad);
+                        }
+                    }
                     if (obj is Transfer transfer)
                         transfer.Spawner.Respawn(transfer);
                     if (obj is Gimmick gimmick)
@@ -1076,7 +1182,17 @@ public class SpawnManager(WorldInstance parentWorld)
                     if (obj is Npc { Spawner: not null } npc)
                         npc.Spawner.Despawn(npc);
                     else if (obj is Doodad { Spawner: not null } doodadWithSpawner)
-                        doodadWithSpawner.Spawner.Despawn(doodadWithSpawner);
+                    {
+                        lock (_lockSpawner)
+                        {
+                            lock (Despawns)
+                            {
+                                if (!Despawns.Remove(doodadWithSpawner))
+                                    continue;
+                            }
+                            doodadWithSpawner.Spawner.Despawn(doodadWithSpawner);
+                        }
+                    }
                     else if (obj is Transfer { Spawner: not null } transfer)
                         transfer.Spawner.Despawn(transfer);
                     else if (obj is Gimmick { Spawner: not null } gimmick)

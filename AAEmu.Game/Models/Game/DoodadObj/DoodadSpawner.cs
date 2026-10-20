@@ -36,6 +36,12 @@ public class DoodadSpawner : Spawner<Doodad>
     internal List<Doodad> _spawned;
     private int _scheduledCount;
     private int _spawnCount;
+    private volatile bool _retired;
+
+    internal void Retire()
+    {
+        _retired = true;
+    }
 
     /// <summary>
     /// Number of allowed spawns
@@ -135,6 +141,9 @@ public class DoodadSpawner : Spawner<Doodad>
     /// <returns></returns>
     public override Doodad Spawn(uint objId)
     {
+        if (_retired)
+            return null;
+
         // TODO: clean up each doodad using the same call
         Permanent = true; // Doodad not on the schedule.
         _spawned = [];
@@ -234,7 +243,7 @@ public class DoodadSpawner : Spawner<Doodad>
     /// <param name="doodad"></param>
     public void DecreaseCount(Doodad doodad)
     {
-        if (RespawnTime > 0)
+        if (!_retired && RespawnTime > 0)
         {
             doodad.Respawn = DateTime.UtcNow.AddSeconds(RespawnTime);
             doodad.ParentWorld.SpawnManager.AddRespawn(doodad);
@@ -351,6 +360,9 @@ public class DoodadSpawner : Spawner<Doodad>
     /// </summary>
     public void DoSpawn()
     {
+        if (_retired)
+            return;
+
         #region Schedule
         // спавнер присутствует в расписании `game_schedule_doodads`
         // First, let's check if the schedule has such an spawnerId
